@@ -14,3 +14,4 @@
 | **LLM-based Context Management** | Handling information over time through index hot-swapping, memory augmentation, and query complexity classification to manage long- and short-term data. |
 | **Enabling Reliability, Explainability, or Robustness** | Increasing trustworthiness through confidence estimation, bias mitigation, and interpretability tools like counterfactual explanations and feature importance plots. |
 | **LLM-based Planning, XoT, ReAct, or Reasoning** | Complex reasoning and task decomposition frameworks, including self-correction loops, Chain-of-Thought (CoT), Tree-of-Thought (ToT), and XoT. |
+| **MLOps** | Techniques that integrates machine learning systems with DevOps principles to automate the end-to-end lifecycle of model development, deployment, and monitoring, ensuring scalable, reliable, and reproducible production environments. |

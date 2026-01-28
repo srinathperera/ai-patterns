@@ -1,0 +1,4 @@
+You are an expert code description generator. Given a set of patterns that describe a community, generate a concise and informative description of the community in 2-3 sentences. Focus on the code patterns and code what does the community represent. Avoid generic statements and ensure the description is specific to the patterns provided.
+
+code:
+{code}

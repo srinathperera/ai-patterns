@@ -1,0 +1,141 @@
+"""
+Generate Gemini embeddings for code files under pattern directories and export as CSV.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, List, Sequence
+
+import numpy as np
+import pandas as pd
+
+try:
+    import google.generativeai as genai
+except ImportError as exc:  # noqa: BLE001
+    raise ImportError("Install google-generativeai via `pip install google-generativeai`.") from exc
+
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+
+# -------------------------- Config --------------------------
+@dataclass
+class Config:
+    # Directories containing code to embed (call-graph clusters + generated samples)
+    code_roots: tuple[Path, ...] = (
+        Path("result/repo_callgraph_clusters").expanduser(),
+        Path("outputs/prompt & rag/20251028_085918 - Run/generated_code-v2").expanduser(),
+    )
+    # Where to write the embeddings CSV
+    output_path: Path = Path("./results/pattern_embeddings/callgraph_embeddings.csv")
+    model_name: str = "text-embedding-004"
+    batch_size: int = 250
+
+
+# -------------------------- API setup --------------------------
+def configure_client() -> None:
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise EnvironmentError("Set GOOGLE_API_KEY or GEMINI_API_KEY before running.")
+    genai.configure(api_key=api_key)
+
+
+# -------------------------- IO helpers --------------------------
+def read_python_file(path: Path) -> str:
+    return f"# File: {path.name}\n" + path.read_text(encoding="utf-8", errors="ignore")
+
+
+def iter_code_files(code_roots: Sequence[Path]) -> List[tuple[str, Path]]:
+    files: List[tuple[str, Path]] = []
+    for root in code_roots:
+        if not root.exists():
+            logger.warning("Skipping missing code root: %s", root)
+            continue
+        repo_dirs = [p for p in sorted(root.iterdir()) if p.is_dir()]
+        if not repo_dirs:
+            logger.warning("No repositories detected in %s", root)
+            continue
+        for repo_dir in repo_dirs:
+            files.extend((repo_dir.name, py_file) for py_file in sorted(repo_dir.rglob("*.py")))
+
+    if not files:
+        raise ValueError("No .py files found under the supplied code roots.")
+    return files
+
+
+# -------------------------- Embedding helpers --------------------------
+def embed_texts(texts: Sequence[str], model_name: str) -> List[List[float]]:
+    embeddings: List[List[float]] = []
+    for text in texts:
+        response = genai.embed_content(model=model_name, content=text, task_type="SEMANTIC_SIMILARITY")
+        embeddings.append(response["embedding"])
+    return embeddings
+
+
+def chunk(sequence: Sequence, size: int) -> Iterable[Sequence]:
+    for start in range(0, len(sequence), size):
+        yield sequence[start : start + size]
+
+
+# -------------------------- Main pipeline --------------------------
+def build_embeddings_dataframe(config: Config) -> pd.DataFrame:
+    files = iter_code_files(config.code_roots)
+    total_files = len(files)
+    records: List[dict] = []
+
+    for start_idx in range(0, total_files, config.batch_size):
+        batch = files[start_idx : start_idx + config.batch_size]
+        logger.info(
+            "Processing files %d-%d / %d",
+            start_idx + 1,
+            min(start_idx + len(batch), total_files),
+            total_files,
+        )
+
+        texts = [read_python_file(path) for _, path in batch]
+        embeddings = embed_texts(texts, config.model_name)
+
+        for (repo_name, py_path), embedding_vector in zip(batch, embeddings):
+            records.append(
+                {
+                    "repo": repo_name,
+                    "file": str(py_path),
+                    "embedding": embedding_vector,
+                }
+            )
+
+    if not records:
+        raise ValueError("No embeddings were generated; ensure .py files have content.")
+
+    embedding_length = len(records[0]["embedding"])
+    rows = []
+    for record in records:
+        row = {f"dim_{i+1}": value for i, value in enumerate(record["embedding"])}
+        row["repo"] = record["repo"]
+        row["file"] = record["file"]
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    logger.info("Generated embeddings for %d files with %d dimensions", len(df), embedding_length)
+    return df
+
+
+def save_embeddings(df: pd.DataFrame, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.info("Saved embeddings to %s", output_path.resolve())
+
+
+def main(config: Config = Config()) -> None:
+    configure_client()
+    embeddings_df = build_embeddings_dataframe(config)
+    save_embeddings(embeddings_df, config.output_path)
+
+
+if __name__ == "__main__":
+    main()

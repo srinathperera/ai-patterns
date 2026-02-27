@@ -18,10 +18,14 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, List, Optional
+from tqdm import tqdm
 
 from langchain.chat_models import init_chat_model
 from langchain_core.prompts import PromptTemplate
 from pypdf import PdfReader
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -29,12 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 # -------------------------- Constants --------------------------
-DEFAULT_TAG = "all v2"
+DEFAULT_TAG = str(os.getenv("PATTERN_EXTRACT_TAG", "default"))
+VERSION = str(os.getenv("PATTERN_EXTRACT_VERSION", "v1"))
 DEFAULT_MAX_RETRIES = int(os.getenv("PATTERN_EXTRACT_RETRIES", "3"))
 DEFAULT_RETRY_DELAY = float(os.getenv("PATTERN_EXTRACT_RETRY_DELAY", "2.0"))
 GEMINI_MAX_CHARS = int(os.getenv("GEMINI_MAX_CHARS", "24000"))
 CHUNK_SIZE = GEMINI_MAX_CHARS
-CHUNK_OVERLAP = 800
+CHUNK_OVERLAP = int(os.getenv("GEMINI_CHUNK_OVERLAP", "800"))
 
 
 # -------------------------- Prompts (copied from pipeline) --------------------------
@@ -83,51 +88,22 @@ Extracted patterns so far:
 {extracted_patterns}
 """
 
-PROMPT_SUMMARY = """
-You are an expert in AI design patterns. 
-Your task is to combine the following AI design patterns into a single, unified pattern. 
-Use information from all patterns to produce one coherent pattern that includes:
-
-- Pattern Name :str
-- Problem :str
-- Context :str
-- Solution :str
-- Result :str
-- Related Patterns :str
-- Category :str
-- Uses: str
-
-Return strictly as JSON. Do not add extra text, explanations, or formatting.
-
-Patterns to combine:
-{patterns_text}
-"""
-
-PROMPT_MERGE = """
-Combine all the following JSON arrays of AI patterns into one deduplicated, coherent JSON array.
-If multiple patterns describe similar problems or solutions, merge them carefully.
-Return only the final JSON array.
-
-All extracted pattern lists:
-{partial_jsons}
-"""
-
 
 # -------------------------- Config --------------------------
 @dataclass
 class Config:
 	tag: str = DEFAULT_TAG
-	run_output: Optional[str] = None
+	version: Optional[str] = None
 	use_cleaned_inputs: bool = False
 
 	def __post_init__(self) -> None:
-		root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+		root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 		output_base = os.path.join(root, "outputs")
-		self.run_output = self.run_output or datetime.now().strftime("%Y%m%d_%H%M%S - Run ")
+		self.version = self.version or VERSION
 		self.paper_folder = os.path.join(root, "data/raw/papers", self.tag)
 		self.cleaned_folder = os.path.join(root, "data/cleaned/papers", self.tag)
-		self.patterns_folder = os.path.join(output_base, self.tag, self.run_output, "extracted_patterns")
-		self.patterns_file = os.path.join(self.patterns_folder, "l2_patterns_v2.json")
+		self.patterns_folder = os.path.join(output_base, self.tag, self.version, "extracted_patterns")
+		self.patterns_file = os.path.join(self.patterns_folder, "l2_patterns.json")
 		os.makedirs(self.patterns_folder, exist_ok=True)
 
 
@@ -162,6 +138,9 @@ def clean_pdf(path: str) -> str:
 
 
 def clean_pdf_to_file(src_path: str, dest_path: str) -> None:
+	if os.path.exists(dest_path):
+		logger.info("Cleaned file already exists for %s, skipping cleaning", src_path)
+		return
 	cleaned_text = clean_pdf(src_path)
 	write_text(cleaned_text, dest_path)
 
@@ -185,7 +164,7 @@ def list_text_files(folder_path: str) -> List[str]:
 def clean_all_pdfs(pdf_folder: str, cleaned_folder: str) -> List[str]:
 	os.makedirs(cleaned_folder, exist_ok=True)
 	cleaned_files: List[str] = []
-	for pdf_path in list_pdf_files(pdf_folder):
+	for pdf_path in tqdm(list_pdf_files(pdf_folder),desc="Cleaning PDFs",ncols=80):
 		base_name = os.path.basename(pdf_path).replace(".pdf", ".txt")
 		out_path = os.path.join(cleaned_folder, f"cleaned_{base_name}")
 		clean_pdf_to_file(pdf_path, out_path)
@@ -302,6 +281,7 @@ def process_file(file_path: str, config: Config) -> List[Any]:
 			except Exception as exc:
 				logger.warning("Failed to load cached chunk %s (%s); re-extracting", cache_path, exc)
 
+		logger.info("Processing chunk %d/%d for %s", idx, len(chunks), file_path)
 		patterns_chunk = run_chunk_with_retry(chunk)
 		write_json(patterns_chunk, cache_path)
 		patterns_for_file.extend(patterns_chunk)
@@ -311,8 +291,8 @@ def process_file(file_path: str, config: Config) -> List[Any]:
 	return patterns_for_file
 
 
-def extract_patterns_with_llm(tag: str = DEFAULT_TAG, run_output: Optional[str] = None, use_cleaned_inputs: bool = False) -> List[Any]:
-	config = Config(tag=tag, run_output=run_output, use_cleaned_inputs=use_cleaned_inputs)
+def extract_patterns_with_llm(tag: str = DEFAULT_TAG, version: Optional[str] = None, use_cleaned_inputs: bool = False) -> List[Any]:
+	config = Config(tag=tag, version=version, use_cleaned_inputs=use_cleaned_inputs)
 	input_files = load_inputs(config)
 
 	all_patterns: List[Any] = []

@@ -1,0 +1,17 @@
+langchain
+langchain-core
+langchain-google-genai
+pandas
+numpy
+scikit-learn
+networkx
+matplotlib
+tqdm
+umap-learn
+pydantic
+joblib
+scipy
+pypdf
+python-louvain
+google-generativeai
+dotenv

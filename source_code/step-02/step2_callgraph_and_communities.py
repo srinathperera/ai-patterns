@@ -15,17 +15,23 @@ from typing import Dict, Iterable, List, Tuple
 
 import community as community_louvain
 import networkx as nx
+from dotenv import load_dotenv
 
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_TAG = str(os.getenv("PATTERN_EXTRACT_TAG", "default"))
+VERSION = str(os.getenv("PATTERN_EXTRACT_VERSION", "v1"))
+
 # -------------------------- Config --------------------------
 @dataclass
 class Config:
-    repo_root: Path = Path("repos/cloned_repos")
-    output_root: Path = Path("result/repo_callgraph_clusters")
+    root: Path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    repo_root: Path = Path(root, "data","raw","repos")
+    output_root: Path = Path(root, "outputs",DEFAULT_TAG,VERSION,"callgraph_communities")
 
     def output_dir_for_repo(self, repo_path: Path) -> Path:
         return self.output_root / repo_path.name

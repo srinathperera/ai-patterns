@@ -15,15 +15,30 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain.agents.structured_output import ToolStrategy
 from pydantic import BaseModel, Field
+from sklearn import logger
 from tqdm import tqdm
+from dotenv import load_dotenv
+from langchain_core.globals import set_llm_cache
 
+# Completely disable LangChain's LLM caching
+set_llm_cache(None)
+
+load_dotenv()
+
+
+DEFAULT_TAG = str(os.getenv("PATTERN_EXTRACT_TAG", "default"))
+VERSION = str(os.getenv("PATTERN_EXTRACT_VERSION", "v1"))
+SAMPLES_PER_PATTERN = 5
 
 # -------------------------- Config --------------------------
 @dataclass
 class Config:
-    curated_clusters_path: Path = Path("notebooks/cluster_results/curated_clusters_nov25.json")
-    raw_patterns_path: Path = Path("outputs/prompt & rag/20251028_085918 - Run/extracted_patterns/all_patterns.json")
-    summaries_output_path: Path = Path("outputs/prompt & rag/20251028_085918 - Run/extracted_patterns/pattern_summaries_dec_16.json")
+    output_root: str = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"outputs", DEFAULT_TAG, VERSION)
+    patterns_folder: str = os.path.join(output_root, "extracted_patterns")
+    curated_clusters_path: Path = Path(output_root, "curated_patterns.json")
+    raw_patterns_path: Path = Path(patterns_folder, "l2_patterns.json")
+    summaries_output_path: Path = Path(patterns_folder, "pattern_summaries.json")
+    code_samples_output_path: Path = Path(output_root, "code_samples.json")
     model_name: str = "gemini-2.5-flash"
     temperature: float = 1.0
 
@@ -49,11 +64,43 @@ def summarize_patterns(patterns: str) -> str:
         f"AI Patterns:\n\n{patterns}"
     )
 
+@tool
+def define_project_idea(pattern_description: str) -> str:
+    """
+    Tool: Define project idea based on Pattern Description
+    """
+    
+    return f"""Define a realworld AI application idea to implement This AI pattern. Choose random relevant domain. It must be like actual application.
+here is some domains: E-commerce, Healthcare, Finance, Education, Social Media, Travel, Real Estate, Entertainment, Food Delivery, Fitness, News Aggregation, Project Management, Customer Support, Event Planning, Job Recruitment, Online Learning, Personal Finance, Blogging Platform, Music Streaming, Video Sharing, Virtual Events, Remote Work Collaboration.
+       Here is a pattern description: \n\n{pattern_description}"""
+
+@tool
+def define_project_architecture(project_idea: str) -> str:
+    """
+    Tool: Define project architecture based on project idea.
+    """
+    
+    return f"Define the architecture for the AI application idea. Use suitable framworks and libraries to implement this AI App.\n Use frameworks libraries if need such as tensorflow, pytorch, jax, scikit-learn, lightgbm, xgboost, catboost, fastai, rapids-cuml, transformers, sentence-transformers, tokenizers, spacy, nltk, gensim, trl, accelerate, vllm, langchain, llama-index, chroma, faiss, weaviate, pinecone, milvus, qdrant, elasticsearch, haystack, pandas, numpy, dask, polars, datasets, pyarrow, langgraph, autogen, crewai, opendevin, dspy, semantic-kernel, langsmith, promptlayer, wandb, trulens, evals, guardrails-ai, pydantic, gradio, streamlit, openai, instructor-embedding, cohere, text2vec, clip, openclip, blip, blip2, lavis, diffusers, torchvision, opencv-python, fastapi, ray, bentoml, onnxruntime, tensorrt, tqdm, rich, loguru, python-dotenv, joblib, networkx, phidata, openaimultiswarm, lcel, memgpt, vectorhub, llmdatahub... Here is project idea:\n\n{project_idea}"
+
+@tool
+def generate_project_code(project_architecture: str) -> str:
+    """
+    Tool: Generate code based on project architecture.
+    """
+    
+    return f"Generated code for project architecture, state the code file for realworld application,there can be multiple files,but i want all files in single code.Use suitable libraries and frameworks if needed.Don't add any comment or doc string.Just actual code only. Here is the project architecture:\n\n{project_architecture}"
+
+
 
 class SummaryGenOutput(BaseModel):
     """Structured response for pattern summarization."""
 
     pattern_summary: str = Field(..., description="Concise summary of the AI design pattern (<=400 words).")
+
+
+class CodeGenOutput(BaseModel):
+    """Result from code generation."""
+    code: str = Field(..., description="The code body")
 
 
 class SummaryAgent:
@@ -68,6 +115,22 @@ class SummaryAgent:
     def summarize(self, message: str) -> SummaryGenOutput:
         inputs = {"messages": [{"role": "user", "content": message}]}
         return self.agent.invoke(inputs, config={"recursion_limit": 100})["structured_response"]
+    
+
+class CodeGenAgent:
+    def __init__(self, llm):
+        self.agent = create_agent(
+            llm,
+            system_prompt="You are an AI code generation agent that generates code for AI design patterns. First define a realworld AI application idea to implement This AI pattern. Then define the architecture(libraries definitions) for the AI application idea. Finally generate code based on project architecture as a single file.",
+            tools=[define_project_idea,define_project_architecture,generate_project_code],
+
+            response_format=ToolStrategy(CodeGenOutput),
+        )
+
+    def generate(self, message: str) -> CodeGenOutput:
+        inputs = {"messages": [{"role": "user", "content": message}]}
+        return self.agent.invoke(inputs, config={"recursion_limit": 200})["structured_response"]
+    
 
 
 # -------------------------- Data helpers --------------------------
@@ -87,7 +150,7 @@ def save_json_file(data: Any, path: Path) -> None:
 
 
 # -------------------------- Pipeline --------------------------
-def generate_summaries(config: Config) -> List[Dict[str, Any]]:
+def generate_summaries(config: Config, cached_summaries: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     curated_clusters = load_json_file(config.curated_clusters_path)
     raw_patterns = load_patterns(config.raw_patterns_path)
 
@@ -96,6 +159,11 @@ def generate_summaries(config: Config) -> List[Dict[str, Any]]:
 
     summaries: List[Dict[str, Any]] = []
     for cluster in tqdm(curated_clusters, desc="Generating Pattern Summaries", ncols=80):
+        if cached_summaries:
+            cached = next((s for s in cached_summaries if s["cluster_id"] == cluster["cluster_id"]), None)
+            if cached:
+                summaries.append(cached)
+                continue
         patterns_df = raw_patterns[raw_patterns["Pattern Name"].isin(set(cluster["l2_patterns"]))]
         payload = json.dumps(patterns_df.to_dict(orient="records"))
 
@@ -113,12 +181,69 @@ def generate_summaries(config: Config) -> List[Dict[str, Any]]:
             }
         )
 
+        save_json_file(summaries, config.summaries_output_path)
+
     return summaries
 
+def generate_code(summary: str, config: Config):
+    llm = build_llm(config)
+    code_gen_agent = CodeGenAgent(llm)
+
+    response = code_gen_agent.generate(summary)
+    while not getattr(response, "code", None):
+        sleep(2)
+        response = code_gen_agent.generate(summary)
+
+    return response.code
+
+def generate_code_for_summaries(summaries: List[Dict[str, Any]], config: Config, cached_code_samples: List[Dict[str, Any]] = None, samples_per_pattern: int = 1) -> List[Dict[str, Any]]:
+    code_outputs = list(cached_code_samples) if cached_code_samples else []
+    by_cluster_id = {entry["cluster_id"]: entry for entry in code_outputs}
+
+    for summary in tqdm(summaries, desc="Generating Code for Summaries", ncols=80):
+        cluster_id = summary["cluster_id"]
+        cluster_name = summary["cluster_name"]
+
+        cluster_entry = by_cluster_id.get(cluster_id)
+        if not cluster_entry:
+            cluster_entry = {
+                "cluster_id": cluster_id,
+                "cluster_name": cluster_name,
+                "code_samples": [],
+            }
+            code_outputs.append(cluster_entry)
+            by_cluster_id[cluster_id] = cluster_entry
+            save_json_file(code_outputs, config.code_samples_output_path)
+
+        pattern_samples = cluster_entry.get("code_samples", [])
+
+        for idx in range(len(pattern_samples), samples_per_pattern):
+            code_output = generate_code(summary["pattern_summary"], config)
+            code_obj = {
+                "filename": f"{cluster_name}/sample_{idx + 1}.py",
+                "code": code_output,
+            }
+            pattern_samples.append(code_obj)
+            cluster_entry["code_samples"] = pattern_samples
+            save_json_file(code_outputs, config.code_samples_output_path)
+
+    return code_outputs
 
 def main(config: Config = Config()) -> None:
-    summaries = generate_summaries(config)
-    save_json_file(summaries, config.summaries_output_path)
+    if os.path.exists(config.summaries_output_path):
+        logger.info("Summaries and code outputs already exist. Skipping generation.")
+        cached_summaries = load_json_file(config.summaries_output_path)
+        summaries = generate_summaries(config, cached_summaries)
+    else:
+        summaries = generate_summaries(config)
+
+    if os.path.exists(config.code_samples_output_path):
+        logger.info("Code samples already exist. Skipping code generation.")
+        cached_code_samples = load_json_file(config.code_samples_output_path)
+    else:
+        cached_code_samples = None
+
+    generate_code_for_summaries(summaries, config,cached_code_samples,SAMPLES_PER_PATTERN)
 
 
 if __name__ == "__main__":

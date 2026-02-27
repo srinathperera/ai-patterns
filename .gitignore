@@ -1,0 +1,6 @@
+.venv/
+*/.env
+source_code/step-03/artifacts/
+source_code/outputs/
+source_code/data/
+source_code/step-03/results/

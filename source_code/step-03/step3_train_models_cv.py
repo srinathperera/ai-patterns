@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import json
 import joblib
@@ -16,13 +17,21 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 import matplotlib.pyplot as plt
 
+from dotenv import load_dotenv
+load_dotenv()
+
+DEFAULT_TAG = str(os.getenv("PATTERN_EXTRACT_TAG", "default"))
+VERSION = str(os.getenv("PATTERN_EXTRACT_VERSION", "v1"))
+
+root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", DEFAULT_TAG, VERSION)
 
 # -------------------------- Config --------------------------
 CONFIG = {
-    "target_column": "verified_pattern",
-    "labeled_data_path": "/datasets/labeled_data.csv",
-    "embeddings_path": "/datasets/embeddings.csv",
-    "min_samples_per_class": 20,
+    "target_column": "pattern",
+    "all_in_one": True, # If embedding dataset is the same as the labeled dataset, set to True to skip the merge step and just read from one CSV
+    "labeled_data_path": root / "pattern_embeddings.csv",
+    "embeddings_path": root / "pattern_embeddings.csv",
+    "min_samples_per_class": 5,
     "n_splits": 5,
     "random_state": 42,
     "none_label": "none",
@@ -39,7 +48,7 @@ MODEL_DEFAULTS = {
         "probability": True,
         "gamma": "scale",
     },
-    "KNN": {"n_neighbors": 15, "weights": "distance", "p": 2},
+    "KNN": {"n_neighbors": 5, "weights": "distance", "p": 2},
 }
 
 MODEL_BUILDERS = {
@@ -58,9 +67,22 @@ def ensure_dir(path: Path) -> Path:
 
 
 def dump_json(obj, path: Path):
+    def _json_default(value):
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            return float(value)
+        if isinstance(value, np.bool_):
+            return bool(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
     ensure_dir(path.parent)
     with path.open("w", encoding="utf-8") as handle:
-        json.dump(obj, handle, indent=2)
+        json.dump(obj, handle, indent=2, default=_json_default)
 
 
 def load_json(path: Path):
@@ -114,6 +136,13 @@ def resolve_weights(custom_weights=None):
 
 
 def load_and_merge_data(config):
+    if config["all_in_one"]:
+        df = pd.read_csv(config["labeled_data_path"])
+        print(df)
+        if config["target_column"] not in df.columns:
+            raise ValueError(f"Expected '{config['target_column']}' column in the dataset for training.")
+        return df
+    
     labeled = pd.read_csv(config["labeled_data_path"])
     embeddings = pd.read_csv(config["embeddings_path"])
     merged = pd.merge(labeled, embeddings, on="file")

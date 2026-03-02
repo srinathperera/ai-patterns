@@ -2,26 +2,36 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import json
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEFAULT_TAG = str(os.getenv("PATTERN_EXTRACT_TAG", "default"))
+VERSION = str(os.getenv("PATTERN_EXTRACT_VERSION", "v1"))
+
+root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", DEFAULT_TAG, VERSION)
 
 
 # -------------------------- Config --------------------------
 CONFIG = {
-    "target_column": "verified_pattern",
+    "target_column": "pattern",
+    "verified_column": "verified",
     "predict_mode": True,
-    "labeled_data_path": "/datasets/labeled_data.csv",
-    "embeddings_path": "/datasets/embeddings.csv",
+    "labeled_data_path": root / "labeled_data.csv",
+    "embeddings_path": root / "embeddings_data.csv",
     "min_samples_per_class": 20,
     "n_splits": 5,
     "random_state": 42,
     "none_label": "none",
-    "model_dir": "artifacts/models",
-    "output_dir": "artifacts/outputs",
+    "model_dir": root / "artifacts" / "models",
+    "output_dir": root / "artifacts" / "outputs",
 }
 
 VOTE_WEIGHTS = {"LogReg": 1.06, "SVC": 1.01, "KNN": 0.93}
@@ -74,12 +84,18 @@ def load_and_merge_data(config):
     return merged
 
 
-def split_verified_sets(data, target_column, min_samples):
-    verified = data[~data[target_column].isna()]
+def split_verified_sets(data, target_column, min_samples, verified_column: str | None = None):
+    if verified_column and verified_column in data.columns:
+        verified_mask = data[verified_column].fillna(False).astype(bool)
+        verified = data[verified_mask]
+        unverified = data[~verified_mask]
+    else:
+        verified = data[~data[target_column].isna()]
+        unverified = data[data[target_column].isna()]
+
     counts = verified[target_column].value_counts()
     keep_labels = counts[counts >= min_samples].index
     verified_filtered = verified[verified[target_column].isin(keep_labels)]
-    unverified = data[data[target_column].isna()]
     return verified_filtered, unverified
 
 
@@ -107,6 +123,8 @@ def load_artifacts(model_dir: Path):
         model_path = model_dir / f"{name.lower()}_model.joblib"
         if model_path.exists():
             models[name] = joblib.load(model_path)
+    if not models:
+        raise FileNotFoundError(f"No model artifacts found in: {model_dir}")
     label_encoder = joblib.load(model_dir / "label_encoder.joblib")
     global_classes = np.array(load_json(model_dir / "classes.json"))
     feature_list = load_json(model_dir / "feature_list.json")
@@ -123,6 +141,7 @@ def run_prediction_pipeline(config=CONFIG):
         data,
         target_column=config["target_column"],
         min_samples=config["min_samples_per_class"],
+        verified_column=config.get("verified_column"),
     )
     if unverified_df.empty:
         print("No unverified data to predict.")

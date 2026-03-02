@@ -15,3 +15,6 @@ pypdf
 python-louvain
 google-generativeai
 dotenv
+sentence-transformers
+torch
+huggingface-hub

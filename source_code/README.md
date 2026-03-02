@@ -206,6 +206,74 @@ python .\step-04\step4_forecast_and_simulate.py
 Main output:
 - outputs/<tag>/<version>/artifacts/outputs/unverified_weighted_predictions.csv
 
+### Step 4B (Optional): Train a custom embedding model with contrastive learning
+
+Use this after you manually annotate some datapoints. This helps you move away from Gemini embeddings and train a task-specific embedding model.
+
+Script:
+
+```powershell
+python .\step-04\step4_contrastive_learning.py
+```
+
+#### 4B.1 Prepare annotated dataset CSV
+
+Default expected file:
+
+- outputs/<tag>/<version>/contrastive/annotated_code_summaries.csv
+
+Minimum required columns:
+
+- label (your class name)
+- code_summary (text to embed)
+
+Example CSV:
+
+```csv
+label,code_summary
+Retrieval Augmented Generation,This code retrieves relevant documents then conditions an LLM answer on retrieved context.
+Tool Use with LLMs,This workflow lets an LLM call external tools and combine tool outputs in final responses.
+Prompting Techniques,This sample applies structured few-shot prompting and response constraints to improve reliability.
+```
+
+Tips:
+- Keep labels consistent (same spelling/case per class).
+- Ensure each class has enough samples.
+- By default, classes with fewer than 5 samples are dropped.
+
+#### 4B.2 Configure (optional)
+
+Defaults are already pipeline-aligned via PATTERN_EXTRACT_TAG and PATTERN_EXTRACT_VERSION.
+
+Optional env vars:
+
+```powershell
+$env:CONTRASTIVE_DATASET_PATH="D:\Company\wso2\ai-patterns\source_code\outputs\ai\v1\contrastive\annotated_code_summaries.csv"
+$env:CONTRASTIVE_LABEL_COLUMN="label"
+$env:CONTRASTIVE_TEXT_COLUMN="code_summary"
+$env:CONTRASTIVE_BASE_MODEL="BAAI/bge-code-v1"
+$env:CONTRASTIVE_MIN_SAMPLES_PER_LABEL="5"
+$env:CONTRASTIVE_USE_HARD_NEGATIVES="true"
+```
+
+#### 4B.3 Outputs
+
+- Trained model:
+	- outputs/<tag>/<version>/contrastive/saved_models/full-dataset-contrastive-*/
+- Training metadata:
+	- outputs/<tag>/<version>/contrastive/training_metadata.json
+
+#### 4B.4 Optional Hugging Face upload
+
+```powershell
+$env:CONTRASTIVE_UPLOAD_TO_HUB="true"
+$env:CONTRASTIVE_HUB_MODEL_ID="your-username/your-model-name"
+$env:HF_TOKEN="your_hf_token"
+python .\step-04\step4_contrastive_learning.py
+```
+
+If upload is disabled (default), training still runs and saves model locally.
+
 Optional utility:
 
 ```powershell
@@ -242,4 +310,6 @@ python .\step-04\step4_forecast_and_simulate.py
 	- provide curated patterns before running synthetic generation
 - No predictions in Step 4:
 	- check labeled_data.csv verified column and whether any rows are unverified
+- Contrastive training drops all classes:
+	- annotate more rows per label or lower CONTRASTIVE_MIN_SAMPLES_PER_LABEL
 

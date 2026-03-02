@@ -28,15 +28,15 @@ root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output
 # -------------------------- Config --------------------------
 CONFIG = {
     "target_column": "pattern",
-    "all_in_one": True, # If embedding dataset is the same as the labeled dataset, set to True to skip the merge step and just read from one CSV
-    "labeled_data_path": root / "pattern_embeddings.csv",
-    "embeddings_path": root / "pattern_embeddings.csv",
+    "all_in_one": False, # If embedding dataset is the same as the labeled dataset, set to True to skip the merge step and just read from one CSV
+    "labeled_data_path": root / "labeled_data.csv",
+    "embeddings_path": root / "embeddings_data.csv",
     "min_samples_per_class": 5,
     "n_splits": 5,
     "random_state": 42,
     "none_label": "none",
-    "model_dir": "artifacts/models",
-    "output_dir": "artifacts/outputs",
+    "model_dir": root / "artifacts" / "models",
+    "output_dir": root / "artifacts" / "outputs",
 }
 
 MODEL_DEFAULTS = {

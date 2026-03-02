@@ -122,13 +122,13 @@ def read_pdf(path: str) -> str:
 
 
 def read_text(path: str) -> str:
-	with open(path, "r") as file:
+	with open(path, "r", encoding='utf-8') as file:
 		return file.read()
 
 
 def write_text(text: str, path: str) -> None:
 	os.makedirs(os.path.dirname(path), exist_ok=True)
-	with open(path, "w") as file:
+	with open(path, "w", encoding='utf-8') as file:
 		file.write(text)
 
 
@@ -237,6 +237,7 @@ def extract_patterns_from_text(text: str):
 
 	try:
 		first_pass = llm.invoke(prompt.format(text=text))
+		logger.info("First pass extraction output: %s", first_pass.content)
 	except Exception as exc:
 		raise RuntimeError(f"Initial extraction failed: {exc}") from exc
 
